@@ -1,4 +1,5 @@
 import os
+import shutil
 from typing import Dict, List, Optional
 
 from PyQt5.QtCore import Qt
@@ -204,6 +205,18 @@ class MainWindow(QMainWindow):
         top_row.addSpacing(12)
         top_row.addWidget(self._gallery_title)
         top_row.addStretch()
+
+        self._btn_dismiss = QPushButton("Dismiss (delete raw)")
+        self._btn_dismiss.setFixedWidth(170)
+        self._btn_dismiss.setStyleSheet(
+            "QPushButton { background-color: #5a2a2a; color: #ffaaaa; "
+            "border: 1px solid #7a3a3a; border-radius: 3px; padding: 4px 10px; }"
+            "QPushButton:hover { background-color: #7a3a3a; }"
+        )
+        self._btn_dismiss.setToolTip("Delete all raw frames for this video without saving")
+        self._btn_dismiss.clicked.connect(self._on_dismiss_requested)
+        top_row.addWidget(self._btn_dismiss)
+
         layout.addLayout(top_row)
 
         self._gallery = GalleryWidget()
@@ -470,13 +483,49 @@ class MainWindow(QMainWindow):
                     self._status_bar.currentMessage() + f"  |  clip: {os.path.basename(clip_path)}"
                 )
 
+            self._delete_raw_folder(result["output_folder"])
+            self._remove_completed_item(self._gallery_result_index)
+            self._go_back_to_setup()
             QMessageBox.information(
                 self, "Save Complete",
-                f"Saved {len(selected):,} frames to:\n{selected_folder}"
+                f"Saved {len(selected):,} frames to:\n{selected_folder}\n\nRaw frames deleted."
             )
         except Exception as e:
             QMessageBox.critical(self, "Save Error", str(e))
             self._log_error(f"Save error: {e}")
+
+    def _on_dismiss_requested(self) -> None:
+        if self._gallery_result_index < 0:
+            return
+        result = self._completed_results[self._gallery_result_index]
+        reply = QMessageBox.question(
+            self, "Dismiss",
+            f"Delete all raw frames for '{result['video_name']}'?\n"
+            f"Folder: {result['output_folder']}\n\n"
+            "Selected frames will NOT be saved.",
+            QMessageBox.Yes | QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
+        self._delete_raw_folder(result["output_folder"])
+        self._remove_completed_item(self._gallery_result_index)
+        self._go_back_to_setup()
+        self._status_bar.showMessage(f"Dismissed — raw frames deleted: {result['video_name']}")
+
+    def _delete_raw_folder(self, folder: str) -> None:
+        if folder and os.path.isdir(folder):
+            try:
+                shutil.rmtree(folder)
+            except Exception as e:
+                self._log_error(f"Could not delete raw folder {folder}: {e}")
+
+    def _remove_completed_item(self, result_index: int) -> None:
+        for i in range(self._completed_list.count()):
+            if self._completed_list.item(i).data(Qt.UserRole) == result_index:
+                self._completed_list.takeItem(i)
+                break
+        if self._completed_list.count() == 0:
+            self._completed_box.setVisible(False)
 
     # ──────────────────────────────────────────────── error log ───────────
 
