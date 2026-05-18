@@ -420,7 +420,9 @@ class LabelSamplerPanel(QWidget):
         errors = 0
         for img_path in list(self._staged):
             try:
-                shutil.copy2(img_path, batch_folder)
+                subfolder = os.path.basename(os.path.dirname(img_path))
+                new_name = f"{subfolder}_{os.path.basename(img_path)}"
+                shutil.copy2(img_path, os.path.join(batch_folder, new_name))
                 try:
                     new_rel.append(os.path.relpath(img_path, source_root))
                 except ValueError:
