@@ -7,7 +7,7 @@ from typing import Dict, List, Optional, Set
 from PyQt5.QtCore import QMetaObject, QRunnable, QSettings, QThreadPool, Qt, Q_ARG, pyqtSignal, pyqtSlot
 from PyQt5.QtGui import QPixmap
 from PyQt5.QtWidgets import (
-    QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
+    QAbstractItemView, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
     QListWidget, QListWidgetItem, QMessageBox, QPushButton, QScrollArea,
     QSpinBox, QSplitter, QVBoxLayout, QWidget,
 )
@@ -88,7 +88,7 @@ class LabelSamplerPanel(QWidget):
         super().__init__(parent)
         self._settings = QSettings("VideoToPng", "App")
         self._pool = QThreadPool.globalInstance()
-        self._current_folder: str = ""
+        self._current_folders: List[str] = []
         self._all_current_images: List[str] = []
         self._thumb_widgets: Dict[str, SamplerThumb] = {}
         self._pix_cache: Dict[str, QPixmap] = {}
@@ -131,8 +131,9 @@ class LabelSamplerPanel(QWidget):
         left_layout.addWidget(QLabel("Subfolders:"))
         self._folder_list = QListWidget()
         self._folder_list.setFixedWidth(260)
-        self._folder_list.currentItemChanged.connect(self._on_folder_selected)
-        self._folder_list.itemClicked.connect(self._on_folder_clicked)
+        self._folder_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self._folder_list.itemSelectionChanged.connect(self._on_selection_changed)
+        self._folder_list.itemClicked.connect(lambda _: self._on_selection_changed())
         left_layout.addWidget(self._folder_list)
         self._excluded_label = QLabel("Already sampled: 0")
         self._excluded_label.setStyleSheet("color: #888; font-size: 10px;")
@@ -246,7 +247,7 @@ class LabelSamplerPanel(QWidget):
         self._clear_grid()
         self._thumb_widgets.clear()
         self._all_current_images.clear()
-        self._current_folder = ""
+        self._current_folders = []
         self._folder_list.clear()
         try:
             entries = sorted(
@@ -291,24 +292,23 @@ class LabelSamplerPanel(QWidget):
 
     # ── thumbnail grid ───────────────────────────────────────────────────────
 
-    def _on_folder_selected(self, current, _previous) -> None:
-        if not current:
+    def _on_selection_changed(self) -> None:
+        folders = [
+            item.data(Qt.UserRole)
+            for item in self._folder_list.selectedItems()
+        ]
+        if not folders:
             return
-        self._load_folder_thumbnails(current.data(Qt.UserRole))
-
-    def _on_folder_clicked(self, item) -> None:
-        if item:
-            self._load_folder_thumbnails(item.data(Qt.UserRole))
-
-    def _load_folder_thumbnails(self, folder_path: str) -> None:
-        self._current_folder = folder_path
-        try:
-            images = sorted(
-                f.path for f in os.scandir(folder_path)
-                if os.path.splitext(f.name)[1].lower() in IMAGE_EXTENSIONS
-            )
-        except PermissionError:
-            return
+        self._current_folders = folders
+        images: List[str] = []
+        for folder_path in folders:
+            try:
+                images.extend(sorted(
+                    f.path for f in os.scandir(folder_path)
+                    if os.path.splitext(f.name)[1].lower() in IMAGE_EXTENSIONS
+                ))
+            except PermissionError:
+                pass
         self._all_current_images = images
         self._rebuild_grid()
 
@@ -346,7 +346,7 @@ class LabelSamplerPanel(QWidget):
 
     def _on_filter_toggled(self, checked: bool) -> None:
         self._filter_staged = checked
-        if self._current_folder:
+        if self._current_folders:
             self._rebuild_grid()
 
     # ── staging ──────────────────────────────────────────────────────────────
@@ -375,7 +375,7 @@ class LabelSamplerPanel(QWidget):
         dlg.exec_()
 
     def _do_random_sample(self) -> None:
-        if not self._current_folder:
+        if not self._current_folders:
             return
         n = self._sample_spin.value()
         source_root = self._source_input.text().strip()
