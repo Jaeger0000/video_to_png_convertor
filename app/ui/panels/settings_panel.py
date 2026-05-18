@@ -74,8 +74,18 @@ class SettingsPanel(QWidget):
         form.addRow("JPEG Quality:", self._quality_row_widget)
 
         # Filename prefix
+        prefix_row = QHBoxLayout()
         self._prefix_input = QLineEdit(DEFAULT_FILENAME_PREFIX)
-        form.addRow("Filename Prefix:", self._prefix_input)
+        from PyQt5.QtWidgets import QCheckBox
+        self._use_video_name_cb = QCheckBox("Use video filename")
+        self._use_video_name_cb.setToolTip(
+            "When checked, each video's frames are named\n"
+            "<videoname>_frame000001.ext instead of the prefix below."
+        )
+        self._use_video_name_cb.toggled.connect(self._on_use_video_name_toggled)
+        prefix_row.addWidget(self._prefix_input)
+        prefix_row.addWidget(self._use_video_name_cb)
+        form.addRow("Filename Prefix:", prefix_row)
 
         # Time range
         time_row = QHBoxLayout()
@@ -123,6 +133,11 @@ class SettingsPanel(QWidget):
         layout.addWidget(self._btn_start)
         layout.addStretch()
 
+    def _on_use_video_name_toggled(self, checked: bool) -> None:
+        self._prefix_input.setEnabled(not checked)
+        if checked:
+            self._prefix_input.setPlaceholderText("<videoname>_frame")
+
     def _on_format_changed(self, text: str) -> None:
         self._quality_row_widget.setVisible(text == "JPEG")
 
@@ -169,7 +184,11 @@ class SettingsPanel(QWidget):
             output_folder=output_folder,
             output_format=self._format_combo.currentText(),
             jpeg_quality=self._quality_slider.value(),
-            filename_prefix=self._prefix_input.text().strip() or DEFAULT_FILENAME_PREFIX,
+            filename_prefix=(
+                os.path.splitext(os.path.basename(video_path))[0] + "_frame"
+                if self._use_video_name_cb.isChecked()
+                else self._prefix_input.text().strip() or DEFAULT_FILENAME_PREFIX
+            ),
             extraction_fps=self._fps_spin.value(),
             start_time_seconds=float(start_s),
             end_time_seconds=float(end_s) if end_s > start_s else 0.0,
