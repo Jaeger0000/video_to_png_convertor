@@ -29,6 +29,10 @@ class SelectionMode(Enum):
     MANUAL = auto()
 
 
+IMAGE_EXTENSIONS = frozenset({
+    ".png", ".jpg", ".jpeg", ".bmp", ".tiff", ".tif", ".webp",
+})
+
 VIDEO_EXTENSIONS = frozenset({
     ".mp4", ".mov", ".avi", ".mkv", ".webm", ".flv", ".wmv",
     ".3gp", ".m4v", ".mpg", ".mpeg", ".ts", ".mts", ".m2ts",

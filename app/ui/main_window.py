@@ -16,8 +16,11 @@ from app.services.save_service import SaveService
 from app.services.video_service import VideoService
 from app.ui.dialogs.save_dialog import SaveDialog
 from app.ui.gallery.gallery_widget import GalleryWidget
+from app.ui.panels.dataset_prep_panel import DatasetPrepPanel
 from app.ui.panels.info_panel import InfoPanel
 from app.ui.panels.input_panel import InputPanel
+from app.ui.panels.label_sampler_panel import LabelSamplerPanel
+from app.ui.panels.label_viewer_panel import LabelViewerPanel
 from app.ui.panels.progress_panel import ProgressPanel
 from app.ui.panels.settings_panel import SettingsPanel
 from app.workers.extraction_worker import ExtractionWorker
@@ -112,10 +115,73 @@ class MainWindow(QMainWindow):
     # ──────────────────────────────────────────────── UI construction ──────
 
     def _build_ui(self) -> None:
+        # Inner extraction stack (setup + gallery)
         self._stack = QStackedWidget()
-        self.setCentralWidget(self._stack)
         self._stack.addWidget(self._build_setup_page())   # page 0
         self._stack.addWidget(self._build_gallery_page()) # page 1
+
+        # New workflow panels
+        self._label_sampler = LabelSamplerPanel()
+        self._label_viewer = LabelViewerPanel()
+        self._dataset_prep = DatasetPrepPanel()
+
+        # Outer stack: extraction | sampler | viewer | dataset
+        self._outer_stack = QStackedWidget()
+        self._outer_stack.addWidget(self._stack)          # 0
+        self._outer_stack.addWidget(self._label_sampler)  # 1
+        self._outer_stack.addWidget(self._label_viewer)   # 2
+        self._outer_stack.addWidget(self._dataset_prep)   # 3
+
+        central = QWidget()
+        central_layout = QVBoxLayout(central)
+        central_layout.setContentsMargins(0, 0, 0, 0)
+        central_layout.setSpacing(0)
+        central_layout.addWidget(self._build_nav_bar())
+        central_layout.addWidget(self._outer_stack)
+        self.setCentralWidget(central)
+
+    def _build_nav_bar(self) -> QWidget:
+        bar = QWidget()
+        bar.setFixedHeight(44)
+        bar.setStyleSheet(
+            "QWidget { background-color: #161616; border-bottom: 1px solid #3a3a3a; }"
+        )
+        layout = QHBoxLayout(bar)
+        layout.setContentsMargins(10, 6, 10, 6)
+        layout.setSpacing(4)
+
+        nav_btn_style = (
+            "QPushButton {"
+            "  background-color: #2a2a2a; border: 1px solid #444;"
+            "  border-radius: 3px; padding: 4px 16px; color: #bbb;"
+            "  font-size: 12px;"
+            "}"
+            "QPushButton:hover { background-color: #3a3a3a; color: #eee; }"
+            "QPushButton:checked {"
+            "  background-color: #1a4a7a; border: 1px solid #2d7fbd;"
+            "  color: white; font-weight: bold;"
+            "}"
+        )
+        self._nav_buttons = []
+        for label in ("Extract", "Label Sampler", "Label Viewer", "Dataset Prep"):
+            btn = QPushButton(label)
+            btn.setCheckable(True)
+            btn.setFixedHeight(30)
+            btn.setStyleSheet(nav_btn_style)
+            layout.addWidget(btn)
+            self._nav_buttons.append(btn)
+
+        self._nav_buttons[0].setChecked(True)
+        for i, btn in enumerate(self._nav_buttons):
+            btn.clicked.connect(lambda _checked, idx=i: self._switch_section(idx))
+
+        layout.addStretch()
+        return bar
+
+    def _switch_section(self, index: int) -> None:
+        self._outer_stack.setCurrentIndex(index)
+        for i, btn in enumerate(self._nav_buttons):
+            btn.setChecked(i == index)
 
     def _build_setup_page(self) -> QWidget:
         page = QWidget()
@@ -485,6 +551,10 @@ class MainWindow(QMainWindow):
 
             self._delete_raw_folder(result["output_folder"])
             self._remove_completed_item(self._gallery_result_index)
+            # Update label sampler source to the frames/ root when a save completes
+            frames_root = os.path.dirname(selected_folder)
+            if os.path.isdir(frames_root):
+                self._label_sampler.set_source_folder(frames_root)
             self._go_back_to_setup()
             QMessageBox.information(
                 self, "Save Complete",
