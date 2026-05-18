@@ -132,6 +132,7 @@ class LabelSamplerPanel(QWidget):
         self._folder_list = QListWidget()
         self._folder_list.setFixedWidth(260)
         self._folder_list.currentItemChanged.connect(self._on_folder_selected)
+        self._folder_list.itemClicked.connect(self._on_folder_clicked)
         left_layout.addWidget(self._folder_list)
         self._excluded_label = QLabel("Already sampled: 0")
         self._excluded_label.setStyleSheet("color: #888; font-size: 10px;")
@@ -295,6 +296,10 @@ class LabelSamplerPanel(QWidget):
             return
         self._load_folder_thumbnails(current.data(Qt.UserRole))
 
+    def _on_folder_clicked(self, item) -> None:
+        if item:
+            self._load_folder_thumbnails(item.data(Qt.UserRole))
+
     def _load_folder_thumbnails(self, folder_path: str) -> None:
         self._current_folder = folder_path
         try:
@@ -435,7 +440,9 @@ class LabelSamplerPanel(QWidget):
             w.set_staged(False)
         self._update_status()
         if self._filter_staged:
-            self._rebuild_grid()
+            self._filter_staged = False
+            self._btn_filter.setChecked(False)
+        self._rebuild_grid()
         msg = f"Batch created: {len(new_rel):,} images copied to:\n{batch_folder}"
         if errors:
             msg += f"\n\n{errors} file(s) failed to copy."
