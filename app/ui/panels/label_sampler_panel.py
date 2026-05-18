@@ -386,16 +386,25 @@ class LabelSamplerPanel(QWidget):
             except ValueError:
                 return p
 
-        available = [
-            p for p in self._all_current_images
-            if rel(p) not in self._history and p not in self._staged
-        ]
-        sampled = random.sample(available, min(n, len(available)))
-        for path in sampled:
-            self._staged.add(path)
-            w = self._thumb_widgets.get(path)
-            if w:
-                w.set_staged(True)
+        # Build a set for fast per-path folder lookup
+        folder_set = set(self._current_folders)
+        # Group current images by their parent folder
+        by_folder: Dict[str, List[str]] = {f: [] for f in self._current_folders}
+        for p in self._all_current_images:
+            parent = os.path.dirname(p)
+            if parent in folder_set:
+                by_folder[parent].append(p)
+
+        for folder_images in by_folder.values():
+            available = [
+                p for p in folder_images
+                if rel(p) not in self._history and p not in self._staged
+            ]
+            for path in random.sample(available, min(n, len(available))):
+                self._staged.add(path)
+                w = self._thumb_widgets.get(path)
+                if w:
+                    w.set_staged(True)
         self._update_status()
 
     def _clear_staged(self) -> None:
