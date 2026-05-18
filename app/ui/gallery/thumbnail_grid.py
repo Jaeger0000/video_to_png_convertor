@@ -75,6 +75,9 @@ class ThumbnailGrid(QWidget):
         page_row.addWidget(self._btn_next)
         layout.addLayout(page_row)
 
+    def get_visible_frames(self) -> List[FrameData]:
+        return list(self._visible_frames)
+
     def load_frames(self, frames: List[FrameData]) -> None:
         self._all_frames = frames
         self._current_page = 0

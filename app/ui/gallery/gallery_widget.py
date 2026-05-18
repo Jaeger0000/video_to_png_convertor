@@ -216,7 +216,9 @@ class GalleryWidget(QWidget):
         self._update_selection_count()
 
     def _on_preview_requested(self, frame_index: int) -> None:
-        dlg = ImageViewerDialog(self._frames, frame_index, parent=self)
+        visible = self._grid.get_visible_frames()
+        start = next((i for i, f in enumerate(visible) if f.frame_index == frame_index), 0)
+        dlg = ImageViewerDialog(visible, start, parent=self)
         dlg.exec_()
 
     def _update_selection_count(self) -> None:
