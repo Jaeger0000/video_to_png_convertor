@@ -378,6 +378,8 @@ class MainWindow(QMainWindow):
             if reply == QMessageBox.No:
                 return
             self._on_cancel()
+        self._settings_panel.set_enabled(True)
+        self._progress_panel.reset()
         self._stack.setCurrentIndex(0)
 
     def _log_error(self, msg: str) -> None:
