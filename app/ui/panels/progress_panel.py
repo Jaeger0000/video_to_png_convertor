@@ -18,9 +18,19 @@ class ProgressPanel(QWidget):
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(4)
 
+        phase_row = QHBoxLayout()
         self._phase_label = QLabel("")
         self._phase_label.setStyleSheet("font-style: italic; color: #aaa;")
-        layout.addWidget(self._phase_label)
+        phase_row.addWidget(self._phase_label)
+        phase_row.addStretch()
+        self._device_badge = QLabel("")
+        self._device_badge.setStyleSheet(
+            "background-color: #1a3a5c; color: #7ec8ff; "
+            "font-size: 10px; padding: 2px 7px; border-radius: 8px;"
+        )
+        self._device_badge.setVisible(False)
+        phase_row.addWidget(self._device_badge)
+        layout.addLayout(phase_row)
 
         self._progress_bar = QProgressBar()
         self._progress_bar.setRange(0, 100)
@@ -52,9 +62,20 @@ class ProgressPanel(QWidget):
     def update_eta(self, seconds: float) -> None:
         self._eta_label.setText(f"ETA: {seconds_to_hms(seconds)}")
 
+    def set_device(self, label: str) -> None:
+        self._device_badge.setText(label)
+        self._device_badge.setVisible(bool(label))
+        color = "#1a4a2a" if "GPU" in label else "#1a3a5c"
+        text_color = "#7effa0" if "GPU" in label else "#7ec8ff"
+        self._device_badge.setStyleSheet(
+            f"background-color: {color}; color: {text_color}; "
+            "font-size: 10px; padding: 2px 7px; border-radius: 8px;"
+        )
+
     def reset(self) -> None:
         self._phase_label.setText("")
         self._progress_bar.setValue(0)
         self._count_label.setText("")
         self._eta_label.setText("")
         self._cancel_btn.setVisible(False)
+        self._device_badge.setVisible(False)

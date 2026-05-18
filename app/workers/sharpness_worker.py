@@ -10,6 +10,7 @@ from app.services.sharpness_service import SharpnessService
 class SharpnessWorker(QThread):
     progress = pyqtSignal(int, int)
     score_ready = pyqtSignal(int, float)
+    device_detected = pyqtSignal(str)   # e.g. "CUDA (RTX 3080)" / "CPU · 8 cores"
     finished = pyqtSignal(list)
     error = pyqtSignal(str)
     cancelled = pyqtSignal()
@@ -23,20 +24,30 @@ class SharpnessWorker(QThread):
 
     def run(self) -> None:
         try:
+            device = SharpnessService.best_device()
+            device_label = self._make_device_label(device)
+            self.device_detected.emit(device_label)
+
             total = len(self._file_paths)
-            completed_count = [0]
-            partial_scores = [0.0] * total
 
             def progress_cb(completed: int, _total: int) -> None:
-                completed_count[0] = completed
                 self.progress.emit(completed, total)
 
-            scores = SharpnessService.score_batch_parallel(
-                self._file_paths,
-                progress_cb,
-                self._cancel_flag,
-                self._max_workers,
-            )
+            if device in ("cuda", "mps"):
+                scores = SharpnessService.score_batch_gpu(
+                    self._file_paths,
+                    progress_cb,
+                    self._cancel_flag,
+                    device=device,
+                    io_workers=self._max_workers,
+                )
+            else:
+                scores = SharpnessService.score_batch_parallel(
+                    self._file_paths,
+                    progress_cb,
+                    self._cancel_flag,
+                    self._max_workers,
+                )
 
             for i, score in enumerate(scores):
                 self.score_ready.emit(i, score)
@@ -52,3 +63,18 @@ class SharpnessWorker(QThread):
 
     def cancel(self) -> None:
         self._cancel_flag.set()
+
+    @staticmethod
+    def _make_device_label(device: str) -> str:
+        if device == "cuda":
+            try:
+                import torch
+                name = torch.cuda.get_device_name(0)
+                return f"GPU · CUDA ({name})"
+            except Exception:
+                return "GPU · CUDA"
+        if device == "mps":
+            return "GPU · MPS (Apple Silicon)"
+        import os
+        cores = os.cpu_count() or 1
+        return f"CPU · {cores} cores"

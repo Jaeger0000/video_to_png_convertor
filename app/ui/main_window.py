@@ -286,6 +286,7 @@ class MainWindow(QMainWindow):
         self._sharpness_worker = SharpnessWorker(paths)
         self._sharpness_worker.score_ready.connect(self._on_score_ready)
         self._sharpness_worker.progress.connect(self._progress_panel.update_progress)
+        self._sharpness_worker.device_detected.connect(self._progress_panel.set_device)
         self._sharpness_worker.finished.connect(self._on_sharpness_finished)
         self._sharpness_worker.error.connect(self._on_sharpness_error)
         self._sharpness_worker.start()
