@@ -83,9 +83,18 @@ class SettingsPanel(QWidget):
             "<videoname>_frame000001.ext instead of the prefix below."
         )
         self._use_video_name_cb.toggled.connect(self._on_use_video_name_toggled)
+        self._prefix_input.textChanged.connect(self._update_prefix_preview)
         prefix_row.addWidget(self._prefix_input)
         prefix_row.addWidget(self._use_video_name_cb)
         form.addRow("Filename Prefix:", prefix_row)
+
+        self._prefix_preview = QLabel()
+        self._prefix_preview.setStyleSheet(
+            "color: #888; font-size: 11px; font-family: monospace; padding: 2px 4px;"
+        )
+        self._prefix_preview.setWordWrap(True)
+        form.addRow("", self._prefix_preview)
+        self._update_prefix_preview()
 
         # Time range
         time_row = QHBoxLayout()
@@ -137,9 +146,27 @@ class SettingsPanel(QWidget):
         self._prefix_input.setEnabled(not checked)
         if checked:
             self._prefix_input.setPlaceholderText("<videoname>_frame")
+        self._update_prefix_preview()
+
+    def _update_prefix_preview(self) -> None:
+        ext = "." + self._format_combo.currentText().lower() if hasattr(self, "_format_combo") else ".png"
+        if ext == ".jpeg":
+            ext = ".jpg"
+        if self._use_video_name_cb.isChecked():
+            video_name = (
+                os.path.splitext(os.path.basename(self._current_video_info.file_path))[0]
+                if self._current_video_info else "my_video"
+            )
+            prefix = f"{video_name}_frame"
+        else:
+            prefix = self._prefix_input.text().strip() or DEFAULT_FILENAME_PREFIX
+        self._prefix_preview.setText(
+            f"→  {prefix}000001{ext},  {prefix}000002{ext},  ..."
+        )
 
     def _on_format_changed(self, text: str) -> None:
         self._quality_row_widget.setVisible(text == "JPEG")
+        self._update_prefix_preview()
 
     def _use_original_fps(self) -> None:
         if self._current_video_info and self._current_video_info.fps > 0:
@@ -163,6 +190,7 @@ class SettingsPanel(QWidget):
         self._start_time.setMaximumTime(max_time)
         self._end_time.setTime(max_time)
         self._start_time.setTime(QTime(0, 0, 0))
+        self._update_prefix_preview()
 
     def build_config(self, video_path: str = None) -> ExtractionConfig:
         if video_path is None and self._current_video_info:
