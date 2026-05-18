@@ -3,11 +3,11 @@ import random
 import re
 from typing import List, Optional, Tuple
 
-from PyQt5.QtCore import QSettings, Qt
+from PyQt5.QtCore import QEvent, QSettings, Qt
 from PyQt5.QtGui import QColor, QPainter, QPen, QPixmap
 from PyQt5.QtWidgets import (
     QFileDialog, QHBoxLayout, QLabel, QLineEdit, QListWidget,
-    QListWidgetItem, QPushButton, QSplitter, QVBoxLayout, QWidget,
+    QListWidgetItem, QPushButton, QScrollArea, QSplitter, QVBoxLayout, QWidget,
 )
 
 from app.constants import IMAGE_EXTENSIONS
@@ -21,6 +21,10 @@ _COLORS = [
 
 BBox = Tuple[int, float, float, float, float]
 
+_ZOOM_MIN = 0.05
+_ZOOM_MAX = 8.0
+_ZOOM_STEP = 1.2
+
 
 class LabelViewerPanel(QWidget):
     def __init__(self, parent=None):
@@ -29,6 +33,9 @@ class LabelViewerPanel(QWidget):
         self._images: List[str] = []
         self._class_names: List[str] = []
         self._current_index: int = -1
+        self._annotated_pix: Optional[QPixmap] = None
+        self._zoom: float = 1.0
+        self._fit_mode: bool = True
         self._build_ui()
 
         saved = self._settings.value("viewer/folder", "")
@@ -66,7 +73,7 @@ class LabelViewerPanel(QWidget):
         left_layout = QVBoxLayout(left)
         left_layout.setContentsMargins(0, 0, 0, 0)
         self._image_list = QListWidget()
-        self._image_list.setFixedWidth(250)
+        self._image_list.setFixedWidth(220)
         self._image_list.currentRowChanged.connect(self._on_row_changed)
         left_layout.addWidget(self._image_list)
         splitter.addWidget(left)
@@ -76,16 +83,66 @@ class LabelViewerPanel(QWidget):
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(4)
 
+        # Scrollable image area
+        self._scroll_area = QScrollArea()
+        self._scroll_area.setAlignment(Qt.AlignCenter)
+        self._scroll_area.setWidgetResizable(False)
+        self._scroll_area.setStyleSheet(
+            "QScrollArea { background: #111; border: 1px solid #333; }"
+            "QScrollArea > QWidget > QWidget { background: #111; }"
+        )
         self._image_label = QLabel()
         self._image_label.setAlignment(Qt.AlignCenter)
-        self._image_label.setStyleSheet("background: #111; border: 1px solid #333;")
-        self._image_label.setMinimumSize(400, 300)
-        right_layout.addWidget(self._image_label, stretch=1)
+        self._image_label.setStyleSheet("background: #111;")
+        self._scroll_area.setWidget(self._image_label)
+        self._scroll_area.viewport().installEventFilter(self)
+        right_layout.addWidget(self._scroll_area, stretch=1)
+
+        # Zoom controls + info row
+        bottom_row = QHBoxLayout()
+        bottom_row.setSpacing(4)
+
+        btn_zoom_out = QPushButton("−")
+        btn_zoom_out.setFixedSize(28, 26)
+        btn_zoom_out.setToolTip("Zoom out  (Ctrl+Scroll)")
+        btn_zoom_out.clicked.connect(self._zoom_out)
+        bottom_row.addWidget(btn_zoom_out)
+
+        self._zoom_label = QLabel("Fit")
+        self._zoom_label.setFixedWidth(48)
+        self._zoom_label.setAlignment(Qt.AlignCenter)
+        self._zoom_label.setStyleSheet(
+            "color: #aaa; font-size: 11px; background: #2a2a2a; "
+            "border: 1px solid #444; border-radius: 2px; padding: 2px;"
+        )
+        bottom_row.addWidget(self._zoom_label)
+
+        btn_zoom_in = QPushButton("+")
+        btn_zoom_in.setFixedSize(28, 26)
+        btn_zoom_in.setToolTip("Zoom in  (Ctrl+Scroll)")
+        btn_zoom_in.clicked.connect(self._zoom_in)
+        bottom_row.addWidget(btn_zoom_in)
+
+        btn_fit = QPushButton("Fit")
+        btn_fit.setFixedWidth(38)
+        btn_fit.setToolTip("Fit image to window")
+        btn_fit.clicked.connect(self._zoom_reset_fit)
+        bottom_row.addWidget(btn_fit)
+
+        btn_100 = QPushButton("1:1")
+        btn_100.setFixedWidth(34)
+        btn_100.setToolTip("Show at 100% (original size)")
+        btn_100.clicked.connect(self._zoom_100)
+        bottom_row.addWidget(btn_100)
+
+        bottom_row.addSpacing(10)
 
         self._info_label = QLabel("No image selected")
         self._info_label.setStyleSheet("color: #aaa; font-size: 11px;")
         self._info_label.setWordWrap(True)
-        right_layout.addWidget(self._info_label)
+        bottom_row.addWidget(self._info_label, stretch=1)
+
+        right_layout.addLayout(bottom_row)
 
         nav_row = QHBoxLayout()
         self._btn_prev = QPushButton("◀ Prev")
@@ -102,6 +159,90 @@ class LabelViewerPanel(QWidget):
         splitter.setStretchFactor(1, 1)
         layout.addWidget(splitter)
         self.setFocusPolicy(Qt.StrongFocus)
+
+    # ── zoom ─────────────────────────────────────────────────────────────────
+
+    def _current_fit_scale(self) -> float:
+        if self._annotated_pix is None or self._annotated_pix.isNull():
+            return 1.0
+        vp = self._scroll_area.viewport()
+        iw, ih = self._annotated_pix.width(), self._annotated_pix.height()
+        return min(max(1, vp.width()) / iw, max(1, vp.height()) / ih)
+
+    def _zoom_in(self) -> None:
+        if self._fit_mode:
+            self._zoom = self._current_fit_scale()
+            self._fit_mode = False
+        self._zoom = min(_ZOOM_MAX, self._zoom * _ZOOM_STEP)
+        self._render_zoom()
+
+    def _zoom_out(self) -> None:
+        if self._fit_mode:
+            self._zoom = self._current_fit_scale()
+            self._fit_mode = False
+        self._zoom = max(_ZOOM_MIN, self._zoom / _ZOOM_STEP)
+        self._render_zoom()
+
+    def _zoom_reset_fit(self) -> None:
+        self._fit_mode = True
+        self._render_zoom()
+
+    def _zoom_100(self) -> None:
+        self._fit_mode = False
+        self._zoom = 1.0
+        self._render_zoom()
+
+    def _render_zoom(self) -> None:
+        if self._annotated_pix is None or self._annotated_pix.isNull():
+            return
+        if self._fit_mode:
+            scale = self._current_fit_scale()
+            self._zoom_label.setText("Fit")
+        else:
+            scale = self._zoom
+            self._zoom_label.setText(f"{int(scale * 100)}%")
+
+        new_w = max(1, int(self._annotated_pix.width() * scale))
+        new_h = max(1, int(self._annotated_pix.height() * scale))
+        scaled = self._annotated_pix.scaled(
+            new_w, new_h, Qt.KeepAspectRatio, Qt.SmoothTransformation
+        )
+        self._image_label.setPixmap(scaled)
+        self._image_label.resize(scaled.width(), scaled.height())
+
+    # ── event handling ───────────────────────────────────────────────────────
+
+    def eventFilter(self, obj, event) -> bool:
+        if obj is self._scroll_area.viewport() and event.type() == QEvent.Wheel:
+            if event.modifiers() & Qt.ControlModifier:
+                if event.angleDelta().y() > 0:
+                    self._zoom_in()
+                else:
+                    self._zoom_out()
+                return True
+        return super().eventFilter(obj, event)
+
+    def keyPressEvent(self, event) -> None:
+        key = event.key()
+        if key in (Qt.Key_Left, Qt.Key_A):
+            self._go_prev()
+        elif key in (Qt.Key_Right, Qt.Key_D):
+            self._go_next()
+        elif key in (Qt.Key_Plus, Qt.Key_Equal):
+            self._zoom_in()
+        elif key == Qt.Key_Minus:
+            self._zoom_out()
+        elif key == Qt.Key_0:
+            self._zoom_reset_fit()
+        elif key == Qt.Key_1:
+            self._zoom_100()
+        else:
+            super().keyPressEvent(event)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        if self._fit_mode:
+            self._render_zoom()
 
     # ── folder scanning ──────────────────────────────────────────────────────
 
@@ -157,12 +298,13 @@ class LabelViewerPanel(QWidget):
     def _on_row_changed(self, row: int) -> None:
         if 0 <= row < len(self._images):
             self._current_index = row
-            self._display_image(self._images[row])
+            self._load_and_annotate(self._images[row])
 
-    def _display_image(self, img_path: str) -> None:
+    def _load_and_annotate(self, img_path: str) -> None:
         pix = QPixmap(img_path)
         if pix.isNull():
             self._image_label.setText("Could not load image.")
+            self._annotated_pix = None
             return
 
         txt_path = os.path.splitext(img_path)[0] + ".txt"
@@ -176,8 +318,7 @@ class LabelViewerPanel(QWidget):
             pen_width = max(2, w // 500)
             for class_id, cx, cy, bw, bh in bboxes:
                 color = QColor(_COLORS[class_id % len(_COLORS)])
-                pen = QPen(color, pen_width)
-                painter.setPen(pen)
+                painter.setPen(QPen(color, pen_width))
                 x1 = int((cx - bw / 2) * w)
                 y1 = int((cy - bh / 2) * h)
                 bw_px = int(bw * w)
@@ -195,10 +336,8 @@ class LabelViewerPanel(QWidget):
                 painter.drawText(x1 + 3, max(text_h, y1) - 3, label)
             painter.end()
 
-        avail_w = max(1, self._image_label.width() - 4)
-        avail_h = max(1, self._image_label.height() - 4)
-        scaled = pix.scaled(avail_w, avail_h, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-        self._image_label.setPixmap(scaled)
+        self._annotated_pix = pix
+        self._render_zoom()
 
         class_counts: dict = {}
         for class_id, *_ in bboxes:
@@ -249,16 +388,3 @@ class LabelViewerPanel(QWidget):
     def _go_random(self) -> None:
         if self._images:
             self._image_list.setCurrentRow(random.randint(0, len(self._images) - 1))
-
-    def keyPressEvent(self, event) -> None:
-        if event.key() == Qt.Key_Left:
-            self._go_prev()
-        elif event.key() == Qt.Key_Right:
-            self._go_next()
-        else:
-            super().keyPressEvent(event)
-
-    def resizeEvent(self, event) -> None:
-        super().resizeEvent(event)
-        if 0 <= self._current_index < len(self._images):
-            self._display_image(self._images[self._current_index])
