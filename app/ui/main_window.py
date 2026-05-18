@@ -338,9 +338,13 @@ class MainWindow(QMainWindow):
             return
 
         raw_folder = self._current_output_folder
-        if raw_folder.endswith("_raw"):
-            selected_folder = raw_folder[:-4]
-        else:
+        # raw_frames/<name> → frames/<name>
+        selected_folder = raw_folder.replace(
+            os.sep + "raw_frames" + os.sep,
+            os.sep + "frames" + os.sep,
+            1,
+        )
+        if selected_folder == raw_folder:          # fallback: path didn't match pattern
             selected_folder = raw_folder + "_selected"
 
         dialog = SaveDialog(len(selected), selected_folder, self)
