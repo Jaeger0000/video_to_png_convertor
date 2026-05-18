@@ -2,12 +2,12 @@ import json
 import os
 import random
 import shutil
-from typing import Dict, List, Set
+from typing import Dict, List, Optional, Set
 
 from PyQt5.QtCore import QMetaObject, QRunnable, QSettings, QThreadPool, Qt, Q_ARG, pyqtSignal, pyqtSlot
 from PyQt5.QtGui import QPixmap
 from PyQt5.QtWidgets import (
-    QFileDialog, QFrame, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
+    QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
     QListWidget, QListWidgetItem, QMessageBox, QPushButton, QScrollArea,
     QSpinBox, QSplitter, QVBoxLayout, QWidget,
 )
@@ -19,15 +19,20 @@ THUMB_SIZE = 118
 
 
 class _ThumbLoader(QRunnable):
-    def __init__(self, path: str, widget: "SamplerThumb"):
+    def __init__(self, path: str, widget: "SamplerThumb", cache: dict):
         super().__init__()
         self._path = path
         self._widget = widget
+        self._cache = cache
         self.setAutoDelete(True)
 
     def run(self) -> None:
-        pix = QPixmap(self._path)
-        if not pix.isNull():
+        pix = self._cache.get(self._path)
+        if pix is None:
+            pix = QPixmap(self._path)
+            if not pix.isNull():
+                self._cache[self._path] = pix
+        if pix and not pix.isNull():
             QMetaObject.invokeMethod(
                 self._widget, "_set_pixmap",
                 Qt.QueuedConnection,
@@ -37,6 +42,7 @@ class _ThumbLoader(QRunnable):
 
 class SamplerThumb(QLabel):
     toggled = pyqtSignal(str, bool)
+    double_clicked = pyqtSignal(str)
 
     def __init__(self, path: str, parent=None):
         super().__init__(parent)
@@ -55,8 +61,13 @@ class SamplerThumb(QLabel):
         self.setPixmap(scaled)
 
     def mousePressEvent(self, event) -> None:
-        self.set_staged(not self._staged)
-        self.toggled.emit(self._path, self._staged)
+        if event.button() == Qt.LeftButton:
+            self.set_staged(not self._staged)
+            self.toggled.emit(self._path, self._staged)
+
+    def mouseDoubleClickEvent(self, event) -> None:
+        if event.button() == Qt.LeftButton:
+            self.double_clicked.emit(self._path)
 
     def set_staged(self, staged: bool) -> None:
         self._staged = staged
@@ -67,6 +78,10 @@ class SamplerThumb(QLabel):
     def is_staged(self) -> bool:
         return self._staged
 
+    @property
+    def path(self) -> str:
+        return self._path
+
 
 class LabelSamplerPanel(QWidget):
     def __init__(self, parent=None):
@@ -74,9 +89,12 @@ class LabelSamplerPanel(QWidget):
         self._settings = QSettings("VideoToPng", "App")
         self._pool = QThreadPool.globalInstance()
         self._current_folder: str = ""
+        self._all_current_images: List[str] = []
         self._thumb_widgets: Dict[str, SamplerThumb] = {}
+        self._pix_cache: Dict[str, QPixmap] = {}
         self._staged: Set[str] = set()
         self._history: Set[str] = set()
+        self._filter_staged: bool = False
         self._build_ui()
 
         saved = self._settings.value("sampler/source_folder", "")
@@ -88,10 +106,6 @@ class LabelSamplerPanel(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(6)
-
-        title = QLabel("Label Sampler")
-        title.setStyleSheet("font-weight: bold; font-size: 13px;")
-        layout.addWidget(title)
 
         src_row = QHBoxLayout()
         src_row.addWidget(QLabel("Source folder:"))
@@ -140,22 +154,29 @@ class LabelSamplerPanel(QWidget):
         self._scroll.setWidget(self._grid_container)
         right_layout.addWidget(self._scroll)
 
-        sample_row = QHBoxLayout()
-        sample_row.addWidget(QLabel("Sample N randomly:"))
+        ctrl_row = QHBoxLayout()
+        ctrl_row.addWidget(QLabel("Sample N randomly:"))
         self._sample_spin = QSpinBox()
         self._sample_spin.setRange(1, 100000)
         self._sample_spin.setValue(50)
-        sample_row.addWidget(self._sample_spin)
+        ctrl_row.addWidget(self._sample_spin)
         btn_sample = QPushButton("Sample")
         btn_sample.setFixedWidth(80)
         btn_sample.clicked.connect(self._do_random_sample)
-        sample_row.addWidget(btn_sample)
+        ctrl_row.addWidget(btn_sample)
         btn_clear = QPushButton("Clear")
         btn_clear.setFixedWidth(60)
         btn_clear.clicked.connect(self._clear_staged)
-        sample_row.addWidget(btn_clear)
-        sample_row.addStretch()
-        right_layout.addLayout(sample_row)
+        ctrl_row.addWidget(btn_clear)
+        ctrl_row.addSpacing(12)
+        self._btn_filter = QPushButton("Staged only")
+        self._btn_filter.setCheckable(True)
+        self._btn_filter.setFixedWidth(90)
+        self._btn_filter.setToolTip("Show only staged images")
+        self._btn_filter.toggled.connect(self._on_filter_toggled)
+        ctrl_row.addWidget(self._btn_filter)
+        ctrl_row.addStretch()
+        right_layout.addLayout(ctrl_row)
 
         splitter.addWidget(right)
         splitter.setStretchFactor(0, 0)
@@ -223,6 +244,7 @@ class LabelSamplerPanel(QWidget):
         self._staged.clear()
         self._clear_grid()
         self._thumb_widgets.clear()
+        self._all_current_images.clear()
         self._current_folder = ""
         self._folder_list.clear()
         try:
@@ -275,8 +297,6 @@ class LabelSamplerPanel(QWidget):
 
     def _load_folder_thumbnails(self, folder_path: str) -> None:
         self._current_folder = folder_path
-        self._clear_grid()
-        self._thumb_widgets.clear()
         try:
             images = sorted(
                 f.path for f in os.scandir(folder_path)
@@ -284,23 +304,45 @@ class LabelSamplerPanel(QWidget):
             )
         except PermissionError:
             return
+        self._all_current_images = images
+        self._rebuild_grid()
 
-        cols = max(3, (self._scroll.width() - 20) // (THUMB_SIZE + 10))
+    def _rebuild_grid(self) -> None:
+        self._clear_grid()
+        self._thumb_widgets.clear()
+        images = (
+            [p for p in self._all_current_images if p in self._staged]
+            if self._filter_staged
+            else self._all_current_images
+        )
+        cols = max(3, (self._scroll.viewport().width() - 10) // (THUMB_SIZE + 10))
         for i, img_path in enumerate(images):
             row, col = divmod(i, cols)
             widget = SamplerThumb(img_path)
             widget.toggled.connect(self._on_thumb_toggled)
+            widget.double_clicked.connect(self._on_thumb_double_clicked)
             if img_path in self._staged:
                 widget.set_staged(True)
             self._grid.addWidget(widget, row, col)
             self._thumb_widgets[img_path] = widget
-            self._pool.start(_ThumbLoader(img_path, widget))
+            cached = self._pix_cache.get(img_path)
+            if cached:
+                widget._set_pixmap(cached)
+            else:
+                self._pool.start(_ThumbLoader(img_path, widget, self._pix_cache))
 
     def _clear_grid(self) -> None:
         while self._grid.count():
             item = self._grid.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
+
+    # ── filter ───────────────────────────────────────────────────────────────
+
+    def _on_filter_toggled(self, checked: bool) -> None:
+        self._filter_staged = checked
+        if self._current_folder:
+            self._rebuild_grid()
 
     # ── staging ──────────────────────────────────────────────────────────────
 
@@ -310,6 +352,22 @@ class LabelSamplerPanel(QWidget):
         else:
             self._staged.discard(path)
         self._update_status()
+        if self._filter_staged and not staged:
+            # Remove widget from grid immediately when filter is on
+            self._rebuild_grid()
+
+    def _on_thumb_double_clicked(self, path: str) -> None:
+        images = (
+            [p for p in self._all_current_images if p in self._staged]
+            if self._filter_staged
+            else self._all_current_images
+        )
+        if not images:
+            return
+        start = images.index(path) if path in images else 0
+        from app.ui.dialogs.image_zoom_dialog import ImageZoomDialog
+        dlg = ImageZoomDialog(images, start_index=start, parent=self)
+        dlg.exec_()
 
     def _do_random_sample(self) -> None:
         if not self._current_folder:
@@ -317,21 +375,16 @@ class LabelSamplerPanel(QWidget):
         n = self._sample_spin.value()
         source_root = self._source_input.text().strip()
 
-        try:
-            all_images = [
-                f.path for f in os.scandir(self._current_folder)
-                if os.path.splitext(f.name)[1].lower() in IMAGE_EXTENSIONS
-            ]
-        except PermissionError:
-            return
-
         def rel(p: str) -> str:
             try:
                 return os.path.relpath(p, source_root)
             except ValueError:
                 return p
 
-        available = [p for p in all_images if rel(p) not in self._history and p not in self._staged]
+        available = [
+            p for p in self._all_current_images
+            if rel(p) not in self._history and p not in self._staged
+        ]
         sampled = random.sample(available, min(n, len(available)))
         for path in sampled:
             self._staged.add(path)
@@ -345,6 +398,8 @@ class LabelSamplerPanel(QWidget):
         for w in self._thumb_widgets.values():
             w.set_staged(False)
         self._update_status()
+        if self._filter_staged:
+            self._rebuild_grid()
 
     def _update_status(self) -> None:
         self._status_label.setText(f"{len(self._staged):,} images staged")
@@ -377,6 +432,8 @@ class LabelSamplerPanel(QWidget):
         for w in self._thumb_widgets.values():
             w.set_staged(False)
         self._update_status()
+        if self._filter_staged:
+            self._rebuild_grid()
         msg = f"Batch created: {len(new_rel):,} images copied to:\n{batch_folder}"
         if errors:
             msg += f"\n\n{errors} file(s) failed to copy."

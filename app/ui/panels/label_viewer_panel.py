@@ -48,10 +48,6 @@ class LabelViewerPanel(QWidget):
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(6)
 
-        title = QLabel("Label Viewer")
-        title.setStyleSheet("font-weight: bold; font-size: 13px;")
-        layout.addWidget(title)
-
         folder_row = QHBoxLayout()
         folder_row.addWidget(QLabel("Labeled folder:"))
         self._folder_input = QLineEdit()
@@ -96,6 +92,7 @@ class LabelViewerPanel(QWidget):
         self._image_label.setStyleSheet("background: #111;")
         self._scroll_area.setWidget(self._image_label)
         self._scroll_area.viewport().installEventFilter(self)
+        self._image_label.installEventFilter(self)
         right_layout.addWidget(self._scroll_area, stretch=1)
 
         # Zoom controls + info row
@@ -220,7 +217,55 @@ class LabelViewerPanel(QWidget):
                 else:
                     self._zoom_out()
                 return True
+        if obj is self._image_label and event.type() == QEvent.MouseButtonDblClick:
+            self._open_zoom_dialog()
+            return True
         return super().eventFilter(obj, event)
+
+    def _open_zoom_dialog(self) -> None:
+        if not self._images or self._current_index < 0:
+            return
+        from app.ui.dialogs.image_zoom_dialog import ImageZoomDialog
+        dlg = ImageZoomDialog(
+            self._images,
+            start_index=self._current_index,
+            annotate_fn=self._annotate_path,
+            parent=self,
+        )
+        dlg.exec_()
+
+    def _annotate_path(self, path: str) -> QPixmap:
+        pix = QPixmap(path)
+        if pix.isNull():
+            return pix
+        bboxes = self._load_bboxes(os.path.splitext(path)[0] + ".txt")
+        if not bboxes:
+            return pix
+        pix = pix.copy()
+        painter = QPainter(pix)
+        painter.setRenderHint(QPainter.Antialiasing)
+        w, h = pix.width(), pix.height()
+        pen_width = max(2, w // 500)
+        for class_id, cx, cy, bw, bh in bboxes:
+            color = QColor(_COLORS[class_id % len(_COLORS)])
+            painter.setPen(QPen(color, pen_width))
+            x1 = int((cx - bw / 2) * w)
+            y1 = int((cy - bh / 2) * h)
+            bw_px = int(bw * w)
+            bh_px = int(bh * h)
+            painter.drawRect(x1, y1, bw_px, bh_px)
+            label = (
+                self._class_names[class_id]
+                if class_id < len(self._class_names)
+                else f"class_{class_id}"
+            )
+            text_w = len(label) * 7 + 6
+            text_h = 16
+            painter.fillRect(x1, max(0, y1 - text_h), text_w, text_h, color)
+            painter.setPen(QPen(QColor("white"), 1))
+            painter.drawText(x1 + 3, max(text_h, y1) - 3, label)
+        painter.end()
+        return pix
 
     def keyPressEvent(self, event) -> None:
         key = event.key()
