@@ -3,8 +3,8 @@ from typing import List, Optional
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (
-    QFileDialog, QHBoxLayout, QLabel, QMainWindow, QMessageBox,
-    QPushButton, QScrollArea, QSplitter, QStackedWidget, QStatusBar,
+    QHBoxLayout, QLabel, QMainWindow, QMessageBox,
+    QPushButton, QSplitter, QStackedWidget, QStatusBar,
     QTextEdit, QVBoxLayout, QWidget,
 )
 
@@ -98,6 +98,7 @@ class MainWindow(QMainWindow):
         self._extracted_paths: List[str] = []
         self._frames: List[FrameData] = []
         self._errors: List[str] = []
+        self._current_output_folder: str = ""
 
         self.setStyleSheet(STYLESHEET)
         self._build_ui()
@@ -242,6 +243,7 @@ class MainWindow(QMainWindow):
             self._advance_queue()
             return
 
+        self._current_output_folder = config.output_folder
         self._progress_panel.set_phase("Extracting frames...")
         self._extraction_worker = ExtractionWorker(config)
         self._extraction_worker.progress.connect(self._progress_panel.update_progress)
@@ -335,29 +337,32 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Nothing to Save", "No frames are selected.")
             return
 
-        dialog = SaveDialog(len(selected), self)
+        selected_folder = os.path.join(self._current_output_folder, "selected")
+
+        dialog = SaveDialog(len(selected), selected_folder, self)
         if dialog.exec_() != dialog.Accepted:
             return
 
         choices = dialog.get_choices()
-        output_folder = QFileDialog.getExistingDirectory(self, "Select Save Folder")
-        if not output_folder:
-            return
-
         try:
             if choices["save_frames"]:
-                count = SaveService.save_selected_frames(frames, output_folder)
-                self._status_bar.showMessage(f"Saved {count:,} frames to {output_folder}")
+                count = SaveService.save_selected_frames(frames, selected_folder)
+                self._status_bar.showMessage(
+                    f"Saved {count:,} frames → {selected_folder}"
+                )
 
             if choices["save_clip"] and self._current_video_info:
                 clip_path = SaveService.save_video_clip(
-                    self._current_video_info.file_path, output_folder, frames
+                    self._current_video_info.file_path, selected_folder, frames
                 )
                 self._status_bar.showMessage(
-                    self._status_bar.currentMessage() + f" | Clip: {os.path.basename(clip_path)}"
+                    self._status_bar.currentMessage() + f"  |  clip: {os.path.basename(clip_path)}"
                 )
 
-            QMessageBox.information(self, "Save Complete", "Files saved successfully.")
+            QMessageBox.information(
+                self, "Save Complete",
+                f"Saved {len(selected):,} frames to:\n{selected_folder}"
+            )
         except Exception as e:
             QMessageBox.critical(self, "Save Error", str(e))
             self._log_error(f"Save error: {e}")
