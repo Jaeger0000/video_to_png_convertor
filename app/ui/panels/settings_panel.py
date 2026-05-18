@@ -192,7 +192,7 @@ class SettingsPanel(QWidget):
         self._start_time.setTime(QTime(0, 0, 0))
         video_name = os.path.splitext(info.file_name)[0]
         self._output_folder_input.setText(
-            os.path.join(os.path.dirname(info.file_path), "frames", video_name)
+            os.path.join(os.path.dirname(info.file_path), "frames", video_name + "_raw")
         )
         self._update_prefix_preview()
 
@@ -206,7 +206,7 @@ class SettingsPanel(QWidget):
             output_folder = os.path.join(
                 os.path.dirname(video_path),
                 "frames",
-                os.path.splitext(os.path.basename(video_path))[0],
+                os.path.splitext(os.path.basename(video_path))[0] + "_raw",
             )
         start_t = self._start_time.time()
         end_t = self._end_time.time()

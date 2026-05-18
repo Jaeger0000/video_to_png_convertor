@@ -337,7 +337,11 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Nothing to Save", "No frames are selected.")
             return
 
-        selected_folder = os.path.join(self._current_output_folder, "selected")
+        raw_folder = self._current_output_folder
+        if raw_folder.endswith("_raw"):
+            selected_folder = raw_folder[:-4]
+        else:
+            selected_folder = raw_folder + "_selected"
 
         dialog = SaveDialog(len(selected), selected_folder, self)
         if dialog.exec_() != dialog.Accepted:
