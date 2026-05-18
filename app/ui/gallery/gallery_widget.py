@@ -11,6 +11,7 @@ from PyQt5.QtCore import Qt
 from app.constants import FilterMode, SelectionMode
 from app.models.frame_data import FrameData
 from app.services.sharpness_service import SharpnessService
+from app.ui.dialogs.image_viewer_dialog import ImageViewerDialog
 from app.ui.gallery.sharpness_chart import SharpnessChart
 from app.ui.gallery.thumbnail_grid import ThumbnailGrid
 
@@ -59,6 +60,7 @@ class GalleryWidget(QWidget):
 
         self._grid = ThumbnailGrid()
         self._grid.frame_toggled.connect(self._on_frame_toggled)
+        self._grid.frame_preview_requested.connect(self._on_preview_requested)
         bottom_layout.addWidget(self._grid)
 
         btn_row = QHBoxLayout()
@@ -212,6 +214,10 @@ class GalleryWidget(QWidget):
         selected = {f.frame_index for f in self._frames if f.is_selected}
         self._chart.highlight_selection(selected)
         self._update_selection_count()
+
+    def _on_preview_requested(self, frame_index: int) -> None:
+        dlg = ImageViewerDialog(self._frames, frame_index, parent=self)
+        dlg.exec_()
 
     def _update_selection_count(self) -> None:
         total = len(self._frames)

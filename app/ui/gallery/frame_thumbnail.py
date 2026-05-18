@@ -8,6 +8,7 @@ from app.models.frame_data import FrameData
 
 class FrameThumbnailWidget(QFrame):
     toggled = pyqtSignal(int, bool)
+    preview_requested = pyqtSignal(int)   # frame_index
 
     def __init__(self, frame_data: FrameData, parent=None):
         super().__init__(parent)
@@ -68,3 +69,10 @@ class FrameThumbnailWidget(QFrame):
         self._frame_data.is_selected = not self._frame_data.is_selected
         self._update_border()
         self.toggled.emit(self._frame_data.frame_index, self._frame_data.is_selected)
+
+    def mouseDoubleClickEvent(self, event) -> None:
+        # Undo the toggle that fired on the first click of this double-click
+        self._frame_data.is_selected = not self._frame_data.is_selected
+        self._update_border()
+        self.toggled.emit(self._frame_data.frame_index, self._frame_data.is_selected)
+        self.preview_requested.emit(self._frame_data.frame_index)

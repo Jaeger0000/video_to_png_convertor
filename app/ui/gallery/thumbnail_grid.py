@@ -33,6 +33,7 @@ class _ThumbnailLoader(QRunnable):
 
 class ThumbnailGrid(QWidget):
     frame_toggled = pyqtSignal(int, bool)
+    frame_preview_requested = pyqtSignal(int)
 
     PAGE_SIZE = THUMBNAIL_PAGE_SIZE
 
@@ -128,6 +129,7 @@ class ThumbnailGrid(QWidget):
             row, col = divmod(i, cols)
             widget = _PatchedThumbnail(frame)
             widget.toggled.connect(self._on_thumbnail_toggled)
+            widget.preview_requested.connect(self.frame_preview_requested)
             self._grid.addWidget(widget, row, col)
             self._thumbnail_widgets[frame.frame_index] = widget
             loader = _ThumbnailLoader(frame.file_path, widget)
