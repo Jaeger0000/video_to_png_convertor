@@ -39,6 +39,9 @@ class LabelViewerPanel(QWidget):
         self._build_ui()
 
         saved = self._settings.value("viewer/folder", "")
+        saved_lbl = self._settings.value("viewer/labels_folder", "")
+        if saved_lbl and os.path.isdir(saved_lbl):
+            self._labels_input.setText(saved_lbl)
         if saved and os.path.isdir(saved):
             self._folder_input.setText(saved)
             self._scan_folder()
@@ -49,9 +52,9 @@ class LabelViewerPanel(QWidget):
         layout.setSpacing(6)
 
         folder_row = QHBoxLayout()
-        folder_row.addWidget(QLabel("Labeled folder:"))
+        folder_row.addWidget(QLabel("Images folder:"))
         self._folder_input = QLineEdit()
-        self._folder_input.setPlaceholderText("Folder with images + YOLO .txt files…")
+        self._folder_input.setPlaceholderText("Folder with images (or YOLO images/train|val|test/)…")
         folder_row.addWidget(self._folder_input)
         btn_browse = QPushButton("Browse")
         btn_browse.setFixedWidth(70)
@@ -62,6 +65,21 @@ class LabelViewerPanel(QWidget):
         btn_random.clicked.connect(self._go_random)
         folder_row.addWidget(btn_random)
         layout.addLayout(folder_row)
+
+        labels_row = QHBoxLayout()
+        labels_row.addWidget(QLabel("Labels folder: "))
+        self._labels_input = QLineEdit()
+        self._labels_input.setPlaceholderText("Same folder as images — or pick a separate labels/ folder…")
+        labels_row.addWidget(self._labels_input)
+        btn_browse_lbl = QPushButton("Browse")
+        btn_browse_lbl.setFixedWidth(70)
+        btn_browse_lbl.clicked.connect(self._browse_labels_folder)
+        labels_row.addWidget(btn_browse_lbl)
+        btn_clear_lbl = QPushButton("Clear")
+        btn_clear_lbl.setFixedWidth(50)
+        btn_clear_lbl.clicked.connect(lambda: self._labels_input.clear())
+        labels_row.addWidget(btn_clear_lbl)
+        layout.addLayout(labels_row)
 
         splitter = QSplitter(Qt.Horizontal)
 
@@ -238,7 +256,7 @@ class LabelViewerPanel(QWidget):
         pix = QPixmap(path)
         if pix.isNull():
             return pix
-        bboxes = self._load_bboxes(os.path.splitext(path)[0] + ".txt")
+        bboxes = self._load_bboxes(self._txt_for_image(path))
         if not bboxes:
             return pix
         pix = pix.copy()
@@ -292,16 +310,44 @@ class LabelViewerPanel(QWidget):
     # ── folder scanning ──────────────────────────────────────────────────────
 
     def _browse_folder(self) -> None:
-        folder = QFileDialog.getExistingDirectory(self, "Select Labeled Images Folder")
+        folder = QFileDialog.getExistingDirectory(self, "Select Images Folder")
         if folder:
             self._folder_input.setText(folder)
+            # Auto-detect YOLO labels/ sibling folder
+            candidate = self._auto_detect_labels(folder)
+            if candidate:
+                self._labels_input.setText(candidate)
             self._scan_folder()
+
+    def _browse_labels_folder(self) -> None:
+        folder = QFileDialog.getExistingDirectory(self, "Select Labels Folder")
+        if folder:
+            self._labels_input.setText(folder)
+            self._scan_folder()
+
+    def _auto_detect_labels(self, images_folder: str) -> str:
+        for sep in (os.sep, "/"):
+            token = sep + "images" + sep
+            if token in images_folder:
+                candidate = images_folder.replace(token, sep + "labels" + sep, 1)
+                if os.path.isdir(candidate):
+                    return candidate
+        return ""
+
+    def _txt_for_image(self, img_path: str) -> str:
+        labels_dir = self._labels_input.text().strip()
+        base = os.path.splitext(os.path.basename(img_path))[0] + ".txt"
+        if labels_dir and os.path.isdir(labels_dir):
+            return os.path.join(labels_dir, base)
+        return os.path.splitext(img_path)[0] + ".txt"
 
     def _scan_folder(self) -> None:
         folder = self._folder_input.text().strip()
         if not folder or not os.path.isdir(folder):
             return
         self._settings.setValue("viewer/folder", folder)
+        labels_dir = self._labels_input.text().strip()
+        self._settings.setValue("viewer/labels_folder", labels_dir)
         self._class_names = self._detect_class_names(folder)
         self._images = sorted(
             os.path.join(folder, f)
@@ -311,7 +357,7 @@ class LabelViewerPanel(QWidget):
         self._image_list.clear()
         for img_path in self._images:
             fname = os.path.basename(img_path)
-            has_lbl = os.path.isfile(os.path.splitext(img_path)[0] + ".txt")
+            has_lbl = os.path.isfile(self._txt_for_image(img_path))
             item = QListWidgetItem(f"{'✓' if has_lbl else '✗'}  {fname}")
             item.setForeground(QColor("#ccc") if has_lbl else QColor("#555"))
             self._image_list.addItem(item)
@@ -319,13 +365,17 @@ class LabelViewerPanel(QWidget):
             self._image_list.setCurrentRow(0)
 
     def _detect_class_names(self, folder: str) -> List[str]:
+        labels_dir = self._labels_input.text().strip()
+        search_dirs = [folder, os.path.dirname(folder)]
+        if labels_dir:
+            search_dirs.append(os.path.dirname(labels_dir.rstrip(os.sep)))
         for fname in ("classes.txt", "obj.names"):
             path = os.path.join(folder, fname)
             if os.path.isfile(path):
                 with open(path) as f:
                     return [l.strip() for l in f if l.strip()]
         for fname in ("data.yaml", "dataset.yaml"):
-            for d in (folder, os.path.dirname(folder)):
+            for d in search_dirs:
                 path = os.path.join(d, fname)
                 if os.path.isfile(path):
                     try:
@@ -352,8 +402,7 @@ class LabelViewerPanel(QWidget):
             self._annotated_pix = None
             return
 
-        txt_path = os.path.splitext(img_path)[0] + ".txt"
-        bboxes = self._load_bboxes(txt_path)
+        bboxes = self._load_bboxes(self._txt_for_image(img_path))
 
         if bboxes:
             pix = pix.copy()
